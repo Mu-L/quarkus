@@ -18,6 +18,6 @@ public class VaultConfigSourceProvider implements ConfigSourceProvider {
 
     @Override
     public Iterable<ConfigSource> getConfigSources(ClassLoader forClassLoader) {
-        return Arrays.asList(new VaultConfigSource(150, vaultBootstrapConfig));
+        return Arrays.asList(new VaultConfigSource(vaultBootstrapConfig));
     }
 }

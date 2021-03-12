@@ -92,6 +92,8 @@ public class KubernetesConfig implements PlatformConfiguration {
 
     /**
      * The host under which the application is going to be exposed
+     * 
+     * @deprecated Use the {@code quarkus.kubernetes.ingress.host} instead
      */
     @ConfigItem
     Optional<String> host;
@@ -233,9 +235,16 @@ public class KubernetesConfig implements PlatformConfiguration {
 
     /**
      * If true, a Kubernetes Ingress will be created
+     * 
+     * @deprecated Use the {@code quarkus.kubernetes.ingress.expose} instead
      */
     @ConfigItem
     boolean expose;
+
+    /**
+     * Ingress configuration
+     */
+    ExpositionConfig ingress;
 
     /**
      * If true, the 'app.kubernetes.io/version' label will be part of the selectors of Service and Deployment
@@ -248,6 +257,19 @@ public class KubernetesConfig implements PlatformConfiguration {
      */
     @ConfigItem(defaultValue = "false")
     boolean deploy;
+
+    /**
+     * If set, the secret will mounted to the application container and its contents will be used for application configuration.
+     */
+    @ConfigItem
+    Optional<String> appSecret;
+
+    /**
+     * If set, the config amp will mounted to the application container and its contents will be used for application
+     * configuration.
+     */
+    @ConfigItem
+    Optional<String> appConfigMap;
 
     public Optional<String> getPartOf() {
         return partOf;
@@ -424,5 +446,18 @@ public class KubernetesConfig implements PlatformConfiguration {
     @Override
     public boolean isExpose() {
         return expose;
+    }
+
+    public Optional<String> getAppSecret() {
+        return appSecret;
+    }
+
+    public Optional<String> getAppConfigMap() {
+        return appConfigMap;
+    }
+
+    @Override
+    public Optional<ExpositionConfig> getExposition() {
+        return Optional.of(ingress);
     }
 }

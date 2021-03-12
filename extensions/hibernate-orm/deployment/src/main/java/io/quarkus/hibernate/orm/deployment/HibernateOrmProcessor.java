@@ -104,7 +104,7 @@ import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.configuration.ConfigurationError;
 import io.quarkus.deployment.index.IndexingUtil;
-import io.quarkus.deployment.pkg.steps.NativeBuild;
+import io.quarkus.deployment.pkg.steps.NativeOrNativeSourcesBuild;
 import io.quarkus.deployment.recording.RecorderContext;
 import io.quarkus.deployment.util.IoUtil;
 import io.quarkus.deployment.util.ServiceUtil;
@@ -128,6 +128,8 @@ import io.quarkus.hibernate.orm.runtime.proxies.PreGeneratedProxies;
 import io.quarkus.hibernate.orm.runtime.tenant.DataSourceTenantConnectionResolver;
 import io.quarkus.hibernate.orm.runtime.tenant.TenantConnectionResolver;
 import io.quarkus.hibernate.orm.runtime.tenant.TenantResolver;
+import io.quarkus.panache.common.deployment.HibernateEnhancersRegisteredBuildItem;
+import io.quarkus.panache.common.deployment.HibernateModelClassCandidatesForFieldAccessBuildItem;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.configuration.ConfigurationException;
 import net.bytebuddy.description.type.TypeDescription;
@@ -499,6 +501,12 @@ public final class HibernateOrmProcessor {
     }
 
     @BuildStep
+    public HibernateModelClassCandidatesForFieldAccessBuildItem candidatesForFieldAccess(JpaEntitiesBuildItem domainObjects) {
+        // Ask Panache to replace direct access to public fields with calls to accessors for all model classes.
+        return new HibernateModelClassCandidatesForFieldAccessBuildItem(domainObjects.getAllModelClassNames());
+    }
+
+    @BuildStep
     @Record(STATIC_INIT)
     public void build(HibernateOrmRecorder recorder, HibernateOrmConfig hibernateOrmConfig,
             BuildProducer<JpaModelPersistenceUnitMappingBuildItem> jpaModelPersistenceUnitMapping,
@@ -611,7 +619,7 @@ public final class HibernateOrmProcessor {
         }
     }
 
-    @BuildStep(onlyIf = NativeBuild.class)
+    @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     public void registerStaticMetamodelClassesForReflection(CombinedIndexBuildItem index,
             BuildProducer<ReflectiveClassBuildItem> reflective) {
         Collection<AnnotationInstance> annotationInstances = index.getIndex().getAnnotations(STATIC_METAMODEL);
@@ -695,7 +703,10 @@ public final class HibernateOrmProcessor {
                         || DataSourceUtil.isDefault(hibernateOrmConfig.defaultPersistenceUnit.datasource.get()))
                 && !defaultJdbcDataSource.isPresent()) {
             throw new ConfigurationException(
-                    "Model classes are defined for the default persistence unit but no default datasource found: the default EntityManagerFactory will not be created.");
+                    "Model classes are defined for the default persistence unit, but no default datasource was found."
+                            + " The default EntityManagerFactory will not be created."
+                            + " To solve this, configure the default datasource."
+                            + " Refer to https://quarkus.io/guides/datasource for guidance.");
         }
 
         for (Entry<String, HibernateOrmConfigPersistenceUnit> persistenceUnitEntry : hibernateOrmConfig.persistenceUnits
@@ -737,7 +748,9 @@ public final class HibernateOrmProcessor {
                     .filter(i -> persistenceUnitConfig.datasource.get().equals(i.getName()))
                     .findFirst()
                     .orElseThrow(() -> new ConfigurationException(
-                            String.format("The datasource '%1$s' is not configured but the persistence unit '%2$s' uses it.",
+                            String.format("The datasource '%1$s' is not configured but the persistence unit '%2$s' uses it."
+                                    + " To solve this, configure datasource '%1$s'."
+                                    + " Refer to https://quarkus.io/guides/datasource for guidance.",
                                     persistenceUnitConfig.datasource.get(), persistenceUnitName)));
             dataSource = persistenceUnitConfig.datasource.get();
         } else {
@@ -751,7 +764,9 @@ public final class HibernateOrmProcessor {
                     .filter(i -> i.isDefault())
                     .findFirst()
                     .orElseThrow(() -> new ConfigurationException(
-                            String.format("The default datasource is not configured but the persistence unit '%s' uses it.",
+                            String.format("The default datasource is not configured but the persistence unit '%s' uses it."
+                                    + " To solve this, configure the default datasource."
+                                    + " Refer to https://quarkus.io/guides/datasource for guidance.",
                                     persistenceUnitName)));
             dataSource = DataSourceUtil.DEFAULT_DATASOURCE_NAME;
         }

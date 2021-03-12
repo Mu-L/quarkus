@@ -1,10 +1,9 @@
 package io.quarkus.devtools.commands;
 
-import static io.quarkus.devtools.ProjectTestUtil.checkContains;
-import static io.quarkus.devtools.ProjectTestUtil.checkMatches;
+import static io.quarkus.devtools.testing.SnapshotTesting.checkContains;
+import static io.quarkus.devtools.testing.SnapshotTesting.checkMatches;
 import static io.quarkus.platform.tools.ToolsConstants.PROP_COMPILER_PLUGIN_VERSION;
 import static io.quarkus.platform.tools.ToolsConstants.PROP_SUREFIRE_PLUGIN_VERSION;
-import static io.quarkus.platform.tools.ToolsUtils.readQuarkusProperties;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,11 +30,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import io.quarkus.devtools.PlatformAwareTestBase;
-import io.quarkus.devtools.ProjectTestUtil;
 import io.quarkus.devtools.commands.data.QuarkusCommandException;
 import io.quarkus.devtools.commands.data.QuarkusCommandOutcome;
 import io.quarkus.devtools.project.BuildTool;
+import io.quarkus.devtools.project.QuarkusProject;
+import io.quarkus.devtools.project.QuarkusProjectHelper;
 import io.quarkus.devtools.project.codegen.writer.FileProjectWriter;
+import io.quarkus.devtools.testing.SnapshotTesting;
 import io.quarkus.maven.utilities.MojoUtils;
 
 public class CreateProjectTest extends PlatformAwareTestBase {
@@ -43,7 +44,7 @@ public class CreateProjectTest extends PlatformAwareTestBase {
     public void createRESTEasy() throws Exception {
         final File file = new File("target/basic-resteasy");
         final Path projectDir = file.toPath();
-        ProjectTestUtil.delete(file);
+        SnapshotTesting.deleteTestDirectory(file);
         assertCreateProject(newCreateProject(projectDir)
                 .groupId("org.acme.foo")
                 .artifactId("resteasy-app")
@@ -51,7 +52,7 @@ public class CreateProjectTest extends PlatformAwareTestBase {
                 .className("org.acme.getting.started.GreetingResource")
                 .resourcePath("/foo")
                 .extensions(Collections.singleton("resteasy")));
-        final Properties quarkusProp = readQuarkusProperties(getPlatformDescriptor());
+        final Properties quarkusProp = getQuarkusProperties();
         assertThat(projectDir.resolve(".gitignore"))
                 .exists()
                 .satisfies(checkMatches("(?s).*target/\\R.*"));
@@ -82,7 +83,7 @@ public class CreateProjectTest extends PlatformAwareTestBase {
     public void createSpringWeb() throws Exception {
         final File file = new File("target/create-spring");
         final Path projectDir = file.toPath();
-        ProjectTestUtil.delete(file);
+        SnapshotTesting.deleteTestDirectory(file);
         assertCreateProject(newCreateProject(projectDir)
                 .groupId("org.acme.bar")
                 .packageName("org.acme.bar.spr")
@@ -110,7 +111,7 @@ public class CreateProjectTest extends PlatformAwareTestBase {
     public void createRESTEasyAndSpringWeb() throws Exception {
         final File file = new File("target/create-spring-resteasy");
         final Path projectDir = file.toPath();
-        ProjectTestUtil.delete(file);
+        SnapshotTesting.deleteTestDirectory(file);
         assertCreateProject(newCreateProject(projectDir)
                 .artifactId("spring-web-resteasy-app")
                 .className("BarController")
@@ -141,9 +142,8 @@ public class CreateProjectTest extends PlatformAwareTestBase {
     public void createGradle() throws Exception {
         final File file = new File("target/create-resteasy-gradle");
         final Path projectDir = file.toPath();
-        ProjectTestUtil.delete(file);
-        assertCreateProject(newCreateProject(projectDir)
-                .buildTool(BuildTool.GRADLE)
+        SnapshotTesting.deleteTestDirectory(file);
+        assertCreateProject(newCreateProject(projectDir, BuildTool.GRADLE)
                 .groupId("io.foo")
                 .packageName("my.project")
                 .artifactId("resteasy-app")
@@ -175,13 +175,17 @@ public class CreateProjectTest extends PlatformAwareTestBase {
     }
 
     private CreateProject newCreateProject(Path dir) {
-        return new CreateProject(dir, getPlatformDescriptor());
+        return newCreateProject(dir, BuildTool.MAVEN);
+    }
+
+    private CreateProject newCreateProject(Path dir, BuildTool buildTool) {
+        return new CreateProject(QuarkusProjectHelper.getProject(dir, buildTool));
     }
 
     @Test
     public void createOnTopOfExisting() throws Exception {
         final File testDir = new File("target/create-existing");
-        ProjectTestUtil.delete(testDir);
+        SnapshotTesting.deleteTestDirectory(testDir);
         testDir.mkdirs();
 
         Model model = new Model();
@@ -192,7 +196,8 @@ public class CreateProjectTest extends PlatformAwareTestBase {
         final File pom = new File(testDir, "pom.xml");
         MojoUtils.write(model, pom);
         assertThatExceptionOfType(QuarkusCommandException.class).isThrownBy(() -> {
-            new CreateProject(testDir.toPath(), getPlatformDescriptor())
+            final QuarkusProject project = QuarkusProjectHelper.getProject(testDir.toPath(), BuildTool.MAVEN);
+            new CreateProject(project)
                     .groupId("something.is")
                     .artifactId("wrong")
                     .version("1.0.0-SNAPSHOT")
@@ -211,7 +216,8 @@ public class CreateProjectTest extends PlatformAwareTestBase {
         List<Callable<Void>> collect = IntStream.range(0, 15).boxed().map(i -> (Callable<Void>) () -> {
             File tempDir = Files.createTempDirectory("test").toFile();
             FileProjectWriter write = new FileProjectWriter(tempDir);
-            final QuarkusCommandOutcome result = new CreateProject(tempDir.toPath(), getPlatformDescriptor())
+            final QuarkusProject project = QuarkusProjectHelper.getProject(tempDir.toPath(), BuildTool.MAVEN);
+            final QuarkusCommandOutcome result = new CreateProject(project)
                     .groupId("org.acme")
                     .artifactId("acme")
                     .version("1.0.0-SNAPSHOT")
@@ -230,8 +236,7 @@ public class CreateProjectTest extends PlatformAwareTestBase {
     private void assertCreateProject(CreateProject createProject)
             throws QuarkusCommandException {
         final QuarkusCommandOutcome result = createProject
-                .quarkusMavenPluginVersion("2.3.5")
-                .quarkusGradlePluginVersion("2.3.5-gradle")
+                .quarkusPluginVersion("2.3.5")
                 .execute();
         assertTrue(result.isSuccess());
     }

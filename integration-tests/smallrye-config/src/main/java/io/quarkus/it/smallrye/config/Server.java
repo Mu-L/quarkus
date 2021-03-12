@@ -1,6 +1,7 @@
 package io.quarkus.it.smallrye.config;
 
 import java.time.Duration;
+import java.time.Period;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +43,9 @@ public interface Server {
     Optional<Proxy> proxy();
 
     @JsonProperty
+    Optional<Cors> cors();
+
+    @JsonProperty
     Log log();
 
     interface Form {
@@ -53,6 +57,9 @@ public interface Server {
 
         @JsonProperty
         String landingPage();
+
+        @JsonProperty
+        Optional<String> cookie();
     }
 
     interface Ssl {
@@ -89,12 +96,31 @@ public interface Server {
         @WithDefault("COMMON")
         Pattern pattern();
 
+        @JsonProperty
+        Period period();
+
         @RegisterForReflection
         enum Pattern {
             COMMON,
             SHORT,
             COMBINED,
             LONG;
+        }
+    }
+
+    interface Cors {
+        @JsonProperty
+        List<Origin> origins();
+
+        @JsonProperty
+        List<String> methods();
+
+        interface Origin {
+            @JsonProperty
+            String host();
+
+            @JsonProperty
+            int port();
         }
     }
 }

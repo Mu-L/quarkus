@@ -20,6 +20,7 @@ import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -42,6 +43,7 @@ import io.quarkus.builder.BuildStep;
 import io.quarkus.deployment.CodeGenerator;
 import io.quarkus.deployment.builditem.ApplicationClassPredicateBuildItem;
 import io.quarkus.deployment.codegen.CodeGenData;
+import io.quarkus.deployment.steps.ClassTransformingBuildStep;
 import io.quarkus.deployment.util.FSWatchUtil;
 import io.quarkus.dev.console.DevConsoleManager;
 import io.quarkus.dev.spi.DevModeType;
@@ -224,7 +226,12 @@ public class IsolatedDevModeMain implements BiConsumer<CuratedApplication, Map<S
                 return null;
             }
             RuntimeUpdatesProcessor processor = new RuntimeUpdatesProcessor(appRoot, context, compiler,
-                    devModeType, this::restartCallback, null);
+                    devModeType, this::restartCallback, null, new BiFunction<String, byte[], byte[]>() {
+                        @Override
+                        public byte[] apply(String s, byte[] bytes) {
+                            return ClassTransformingBuildStep.transform(s, bytes);
+                        }
+                    });
 
             for (HotReplacementSetup service : ServiceLoader.load(HotReplacementSetup.class,
                     curatedApplication.getBaseRuntimeClassLoader())) {
@@ -290,6 +297,7 @@ public class IsolatedDevModeMain implements BiConsumer<CuratedApplication, Map<S
     //the main entry point, but loaded inside the augmentation class loader
     @Override
     public void accept(CuratedApplication o, Map<String, Object> params) {
+        Timing.staticInitStarted(o.getBaseRuntimeClassLoader());
         //https://github.com/quarkusio/quarkus/issues/9748
         //if you have an app with all daemon threads then the app thread
         //may be the only thread keeping the JVM alive

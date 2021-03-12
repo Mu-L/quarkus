@@ -9,7 +9,7 @@ include::./attributes.adoc[]
 
 CAUTION: Quarkus Gradle support is considered preview.
 You can use Gradle to create Quarkus projects as outlined in our guides. If you go beyond there will be cases where
-the Gradle tasks https://github.com/quarkusio/quarkus/issues/5101[does not behave as expected].
+the Gradle tasks https://github.com/quarkusio/quarkus/issues/10189[does not behave as expected].
 This is just a caution, and we recommend if you like Gradle you try it out and give us feedback.
 
 [[project-creation]]
@@ -55,7 +55,7 @@ The following table lists the attributes you can pass to the `create` command:
 | The artifact id of the created project. Not passing it triggers the interactive mode.
 
 | `projectVersion`
-| `1.0-SNAPSHOT`
+| `1.0.0-SNAPSHOT`
 | The version of the created project
 
 | `className`
@@ -225,22 +225,31 @@ This allows you to develop in the same environment you will actually run your ap
 
 WARNING: Do not use this in production. This should only be used in a development environment. You should not run production applications in dev mode.
 
-To do this you must have the `quarkus-undertow-websockets` extension installed:
+To do this you must build a mutable application, using the `mutable-jar` format. Set the following properties in `application.properties`:
 
-[source,bash]
+[source,properties]
 ----
-./gradlew addExtension --extensions="undertow-websockets"
+quarkus.package.type=mutable-jar <1>
+quarkus.live-reload.password=changeit <2>
+quarkus.live-reload.url=http://my.cluster.host.com:8080 <3>
 ----
+<1> This tells Quarkus to use the mutable-jar format. Mutable applications also include the deployment time parts of Quarkus,
+so they take up a bit more disk space. If run normally they start just as fast and use the same memory as an immutable application,
+however they can also be started in dev mode.
+<2> The password that is used to secure communication between the remote side and the local side.
+<3> The URL that your app is going to be running in dev mode at. This is only needed on the local side, so you
+may want to leave it out of the properties file and specify it as a system property on the command line.
 
-You must also have the following config properties set:
+Before you start Quarkus on the remote host set the environment variable `QUARKUS_LAUNCH_DEVMODE=true`. If you are
+on bare metal you can just set this via the `export QUARKUS_LAUNCH_DEVMODE=true` command, if you are running using
+docker start the image with `-e QUARKUS_LAUNCH_DEVMODE=true`. When the application starts you should now see the following
+line in the logs: `Profile dev activated. Live Coding activated`.
 
-- `quarkus.live-reload.password`
-- `quarkus.live-reload.url`
+NOTE: The remote side does not need to include Maven or any other development tools. The normal `fast-jar` Dockerfile
+that is generated with a new Quarkus application is all you need. If you are using bare metal launch the Quarkus runner
+jar, do not attempt to run normal devmode.
 
-These can be set via `application.properties`, or any other way (e.g. system properties, environment vars etc). The
-password must be set on both the local and remote processes, while the url only needs to be set on the local host.
-
-Start Quarkus in dev mode on the remote host. Now you need to connect your local agent to the remote host:
+Now you need to connect your local agent to the remote host, using the `remote-dev` command:
 
 [source,bash]
 ----
@@ -249,6 +258,10 @@ Start Quarkus in dev mode on the remote host. Now you need to connect your local
 
 Now every time you refresh the browser you should see any changes you have made locally immediately visible in the remote
 app.
+
+All the config options are shown below:
+
+include::{generated-dir}/config/quarkus-live-reload-live-reload-config.adoc[opts=optional, leveloffset=+1]
 
 == Debugging
 
@@ -400,27 +413,24 @@ Run the native tests using:
 
 This task depends on `quarkusBuild`, so it will generate the native image before running the tests.
 
-== Building Uber-Jars
+[NOTE]
+====
+By default, the `native-test` source set is based on `main` and `test` source sets. It is possible to add an extra source set. For example, if your integration tests are located in an `integrationTest` source set, you can specify it as:
 
-Quarkus Gradle plugin supports the generation of Uber-Jars by specifying an `--uber-jar` argument as follows:
-
-[source,bash]
+[source,groovy]
 ----
-./gradlew quarkusBuild --uber-jar
-----
-
-When building an Uber-Jar you can specify entries that you want to exclude from the generated jar by using the `--ignored-entry` argument:
-
-[source,bash]
-----
-./gradlew quarkusBuild --uber-jar --ignored-entry=META-INF/file1.txt
+quarkus {
+    sourceSets {
+        extraNativeTest = sourceSets.integrationTest
+    }
+}
 ----
 
-The entries are relative to the root of the generated Uber-Jar. You can specify multiple entries by adding extra `--ignored-entry` arguments.
+====
 
 == Using fast-jar
 
-When configuring `quarkus.package.type=fast-jar` (which will become the default soon) in `application.properties` (or any of the other supporting configuration sources), then the result of executing `./gradlew build` is a new directory under `build` named `quarkus-app`.
+`fast-jar` is now the default quarkus package type. The result of `./gradlew build` command is a new directory under `build` named `quarkus-app`.
 
 You can run the application using: `java -jar target/quarkus-app/quarkus-run.jar`.
 
@@ -430,6 +440,24 @@ might not function correctly.
 TIP: The `fast-jar` packaging results in creating an artifact that starts a little faster and consumes slightly less memory than a legacy Quarkus jar
 because it has indexed information about which dependency jar contains classes and resources. It can thus avoid the lookup into potentially every jar
 on the classpath that the legacy jar necessitates, when loading a class or resource.
+
+== Building Uber-Jars
+
+Quarkus Gradle plugin supports the generation of Uber-Jars by specifying a `quarkus.package.type` argument as follows:
+
+[source,bash]
+----
+./gradlew quarkusBuild -Dquarkus.package.type=uber-jar
+----
+
+When building an Uber-Jar you can specify entries that you want to exclude from the generated jar by using the `--ignored-entry` argument:
+
+[source,bash]
+----
+./gradlew quarkusBuild -Dquarkus.package.type=uber-jar --ignored-entry=META-INF/file1.txt
+----
+
+The entries are relative to the root of the generated Uber-Jar. You can specify multiple entries by adding extra `--ignored-entry` arguments.
 
 [[multi-module-gradle]]
 === Working with multi-module projects

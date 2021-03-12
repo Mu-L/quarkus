@@ -19,7 +19,6 @@ import javax.interceptor.Interceptor;
 import javax.transaction.SystemException;
 import javax.transaction.UserTransaction;
 
-import org.eclipse.microprofile.config.Config;
 import org.jboss.logging.Logger;
 import org.quartz.CronScheduleBuilder;
 import org.quartz.Job;
@@ -55,8 +54,8 @@ import io.quarkus.scheduler.runtime.ScheduledInvoker;
 import io.quarkus.scheduler.runtime.ScheduledMethodMetadata;
 import io.quarkus.scheduler.runtime.SchedulerContext;
 import io.quarkus.scheduler.runtime.SchedulerRuntimeConfig;
-import io.quarkus.scheduler.runtime.SimpleScheduler;
 import io.quarkus.scheduler.runtime.SkipConcurrentExecutionInvoker;
+import io.quarkus.scheduler.runtime.util.SchedulerUtils;
 
 @Singleton
 public class QuartzScheduler implements Scheduler {
@@ -68,9 +67,8 @@ public class QuartzScheduler implements Scheduler {
     private final boolean enabled;
     private final boolean startHalted;
 
-    public QuartzScheduler(SchedulerContext context, QuartzSupport quartzSupport, Config config,
-            SchedulerRuntimeConfig schedulerRuntimeConfig, Event<SkippedExecution> skippedExecutionEvent, Instance<Job> jobs,
-            Instance<UserTransaction> userTransation) {
+    public QuartzScheduler(SchedulerContext context, QuartzSupport quartzSupport, SchedulerRuntimeConfig schedulerRuntimeConfig,
+            Event<SkippedExecution> skippedExecutionEvent, Instance<Job> jobs, Instance<UserTransaction> userTransation) {
         enabled = schedulerRuntimeConfig.enabled;
         final QuartzRuntimeConfig runtimeConfig = quartzSupport.getRuntimeConfig();
         warnDeprecated(runtimeConfig);
@@ -118,7 +116,7 @@ public class QuartzScheduler implements Scheduler {
                     int nameSequence = 0;
 
                     for (Scheduled scheduled : method.getSchedules()) {
-                        String identity = scheduled.identity().trim();
+                        String identity = SchedulerUtils.lookUpPropertyValue(scheduled.identity());
                         if (identity.isEmpty()) {
                             identity = ++nameSequence + "_" + method.getInvokerClassName();
                         }
@@ -136,11 +134,8 @@ public class QuartzScheduler implements Scheduler {
                                 .requestRecovery();
                         ScheduleBuilder<?> scheduleBuilder;
 
-                        String cron = scheduled.cron().trim();
+                        String cron = SchedulerUtils.lookUpPropertyValue(scheduled.cron());
                         if (!cron.isEmpty()) {
-                            if (SchedulerContext.isConfigValue(cron)) {
-                                cron = config.getValue(SchedulerContext.getConfigProperty(cron), String.class);
-                            }
                             if (!CronType.QUARTZ.equals(cronType)) {
                                 // Migrate the expression
                                 Cron cronExpr = parser.parse(cron);
@@ -158,8 +153,7 @@ public class QuartzScheduler implements Scheduler {
                             scheduleBuilder = CronScheduleBuilder.cronSchedule(cron);
                         } else if (!scheduled.every().isEmpty()) {
                             scheduleBuilder = SimpleScheduleBuilder.simpleSchedule()
-                                    .withIntervalInMilliseconds(
-                                            SimpleScheduler.parseDuration(scheduled, scheduled.every(), "every").toMillis())
+                                    .withIntervalInMilliseconds(SchedulerUtils.parseEveryAsMillis(scheduled))
                                     .repeatForever();
                         } else {
                             throw new IllegalArgumentException("Invalid schedule configuration: " + scheduled);
@@ -173,8 +167,7 @@ public class QuartzScheduler implements Scheduler {
                         if (scheduled.delay() > 0) {
                             millisToAdd = scheduled.delayUnit().toMillis(scheduled.delay());
                         } else if (!scheduled.delayed().isEmpty()) {
-                            millisToAdd = Math
-                                    .abs(SimpleScheduler.parseDuration(scheduled, scheduled.delayed(), "delayed").toMillis());
+                            millisToAdd = SchedulerUtils.parseDelayedAsMillis(scheduled);
                         }
                         if (millisToAdd != null) {
                             triggerBuilder.startAt(new Date(Instant.now()
@@ -182,12 +175,11 @@ public class QuartzScheduler implements Scheduler {
                         }
 
                         JobDetail job = jobBuilder.build();
-                        if (scheduler.checkExists(job.getKey())) {
-                            scheduler.deleteJob(job.getKey());
+                        if (!scheduler.checkExists(job.getKey())) {
+                            scheduler.scheduleJob(job, triggerBuilder.build());
+                            LOGGER.debugf("Scheduled business method %s with config %s", method.getMethodDescription(),
+                                    scheduled);
                         }
-                        scheduler.scheduleJob(job, triggerBuilder.build());
-                        LOGGER.debugf("Scheduled business method %s with config %s", method.getMethodDescription(),
-                                scheduled);
                     }
                 }
                 if (transaction != null) {
@@ -343,7 +335,9 @@ public class QuartzScheduler implements Scheduler {
                     QuarkusQuartzConnectionPoolProvider.class.getName());
             if (buildTimeConfig.clustered) {
                 props.put(StdSchedulerFactory.PROP_JOB_STORE_PREFIX + ".isClustered", "true");
-                props.put(StdSchedulerFactory.PROP_JOB_STORE_PREFIX + ".clusterCheckinInterval", "20000"); // 20 seconds
+                props.put(StdSchedulerFactory.PROP_JOB_STORE_PREFIX + ".acquireTriggersWithinLock", "true");
+                props.put(StdSchedulerFactory.PROP_JOB_STORE_PREFIX + ".clusterCheckinInterval",
+                        "" + quartzSupport.getBuildTimeConfig().clusterCheckinInterval);
             }
 
             if (buildTimeConfig.storeType.isNonManagedTxJobStore()) {

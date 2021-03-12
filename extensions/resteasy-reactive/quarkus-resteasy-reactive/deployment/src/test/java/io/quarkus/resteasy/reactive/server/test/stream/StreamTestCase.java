@@ -19,6 +19,8 @@ import org.jboss.shrinkwrap.api.ShrinkWrap;
 import org.jboss.shrinkwrap.api.spec.JavaArchive;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.quarkus.test.QuarkusUnitTest;
@@ -27,6 +29,7 @@ import io.restassured.RestAssured;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.subscription.Cancellable;
 
+@DisabledOnOs(OS.WINDOWS)
 public class StreamTestCase {
 
     @TestHTTPResource
@@ -40,6 +43,10 @@ public class StreamTestCase {
     @Test
     public void testStreaming() throws Exception {
         RestAssured.get("/stream/text/stream")
+                .then()
+                .statusCode(200)
+                .body(Matchers.equalTo("foobar"));
+        RestAssured.get("/stream/text/stream/publisher")
                 .then()
                 .statusCode(200)
                 .body(Matchers.equalTo("foobar"));
@@ -58,6 +65,10 @@ public class StreamTestCase {
                 .body(Matchers.equalTo("foobar"));
 
         RestAssured.get("/stream/char-arrays/stream")
+                .then()
+                .statusCode(200)
+                .body(Matchers.equalTo("foobar"));
+        RestAssured.get("/stream/char-arrays/stream/publisher")
                 .then()
                 .statusCode(200)
                 .body(Matchers.equalTo("foobar"));

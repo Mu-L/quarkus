@@ -41,7 +41,7 @@ The following table lists the attributes you can pass to the `create` command:
 | The artifact id of the created project. Not passing it triggers the interactive mode.
 
 | `projectVersion`
-| `1.0-SNAPSHOT`
+| `1.0.0-SNAPSHOT`
 | The version of the created project
 
 | `platformGroupId`
@@ -168,7 +168,7 @@ This allows you to develop in the same environment you will actually run your ap
 
 WARNING: Do not use this in production. This should only be used in a development environment. You should not run production application in dev mode.
 
-To do this you must build a mutable application, using the `mutable-jar` format. Set the following properties in `application.xml`:
+To do this you must build a mutable application, using the `mutable-jar` format. Set the following properties in `application.properties`:
 
 [source,properties]
 ----
@@ -206,6 +206,10 @@ application via HTTP calls.
 If you do not want to use the HTTP feature then you can simply run the `remote-dev` command without specifying the URL.
 In this mode the command will continuously rebuild the local application, so you can use an external tool such as odo or
 rsync to sync to the remote application.
+
+All the config options are shown below:
+
+include::{generated-dir}/config/quarkus-live-reload-live-reload-config.adoc[opts=optional, leveloffset=+1]
 
 NOTE: It is recommended you use SSL when using remote dev mode, however even if you are using an unencrypted connection
 your password is never sent directly over the wire. For the initial connection request the password is hashed with the
@@ -331,7 +335,7 @@ Now you should be able to execute `./mvnw quarkus-bootstrap:build-tree` on your 
 [source,text,subs=attributes+]
 ----
 [INFO] --- quarkus-bootstrap-maven-plugin:{quarkus-version}:build-tree (default-cli) @ getting-started ---
-[INFO] org.acme:getting-started:jar:1.0-SNAPSHOT
+[INFO] org.acme:getting-started:jar:1.0.0-SNAPSHOT
 [INFO] └─ io.quarkus:quarkus-resteasy-deployment:jar:{quarkus-version} (compile)
 [INFO]    ├─ io.quarkus:quarkus-resteasy-server-common-deployment:jar:{quarkus-version} (compile)
 [INFO]    │  ├─ io.quarkus:quarkus-core-deployment:jar:{quarkus-version} (compile)
@@ -503,23 +507,9 @@ If you have not used <<project-creation,project scaffolding>>, add the following
 <5> Enable the `native` package type. The build will therefore produce a native executable.
 <6> If you want to test your native executable with Integration Tests, add the following plugin configuration. Test names `*IT` and annotated `@NativeImageTest` will be run against the native executable. See the link:building-native-image[Native executable guide] for more info.
 
-[[uber-jar-maven]]
-=== Uber-Jar Creation
-
-Quarkus Maven plugin supports the generation of Uber-Jars by specifying a `quarkus.package.type=uber-jar` configuration option in your `application.properties`.
-
-The original jar will still be present in the `target` directory but it will be renamed to contain the `.original` suffix.
-
-When building an Uber-Jar you can specify entries that you want to exclude from the generated jar by using the `quarkus.package.ignored-entries` configuration
-option, this takes a comma separated list of entries to ignore.
-
-Uber-Jar creation by default excludes link:https://docs.oracle.com/javase/tutorial/deployment/jar/intro.html[signature files] that might be present in the dependencies of the application.
-
-Uber-Jar's final name is configurable via a Maven's build settings `finalName` option.
-
 === Using fast-jar
 
-When configuring `quarkus.package.type=fast-jar` (which will become the default soon), then the result of executing `./mvnw package` is a new directory under `target` named `quarkus-app`.
+`fast-jar` is now the default quarkus package type. The result of `./mvnw package` command is a new directory under `target` named `quarkus-app`.
 
 You can run the application using: `java -jar target/quarkus-app/quarkus-run.jar`.
 
@@ -529,6 +519,21 @@ might not function correctly.
 TIP: The `fast-jar` packaging results in creating an artifact that starts a little faster and consumes slightly less memory than a legacy Quarkus jar
 because it has indexed information about which dependency jar contains classes and resources. It can thus avoid the lookup into potentially every jar
 on the classpath that the legacy jar necessitates, when loading a class or resource.
+
+[[uber-jar-maven]]
+=== Uber-Jar Creation
+
+Quarkus Maven plugin supports the generation of Uber-Jars by specifying a `quarkus.package.type=uber-jar` configuration option in your `application.properties`
+(or `<quarkus.package.type>uber-jar</quarkus.package.type>` in your `pom.xml`).
+
+The original jar will still be present in the `target` directory but it will be renamed to contain the `.original` suffix.
+
+When building an Uber-Jar you can specify entries that you want to exclude from the generated jar by using the `quarkus.package.ignored-entries` configuration
+option, this takes a comma separated list of entries to ignore.
+
+Uber-Jar creation by default excludes link:https://docs.oracle.com/javase/tutorial/deployment/jar/intro.html[signature files] that might be present in the dependencies of the application.
+
+Uber-Jar's final name is configurable via a Maven's build settings `finalName` option.
 
 [[multi-module-maven]]
 === Working with multi-module projects

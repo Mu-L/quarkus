@@ -11,9 +11,6 @@ include::./attributes.adoc[]
 :sectnums:
 :sectnumlevels: 4
 :toc:
-:extension-status: experimental
-
-include::./status-include.adoc[]
 
 Qute is a templating engine designed specifically to meet the Quarkus needs.
 The usage of reflection is minimized to reduce the size of native images.
@@ -351,7 +348,7 @@ NOTE: The current context can be accessed via the implicit binding `this`.
 
 |Elvis Operator
 |Outputs the default value if the previous part cannot be resolved or resolves to `null`.
-|`{person.name ?: 'John'}`, `{person.name or 'John'}`
+|`{person.name ?: 'John'}`, `{person.name or 'John'}`, `{person.name.or('John')}`
 
 |orEmpty
 |Outputs an empty list if the previous part cannot be resolved or resolves to `null`.
@@ -373,7 +370,31 @@ NOTE: The current context can be accessed via the implicit binding `this`.
 
 TIP: The condition in a ternary operator evaluates to `true` if the value is not considered `falsy` as described in the <<if_section>>.
 
-NOTE: In fact, the operators are implemented as "virtual methods" that consume one parameter and can be used with infix notation, i.e. `{person.name or 'John'}` is translated to `{person.name.or('John')}`.
+NOTE: In fact, the operators are implemented as "virtual methods" that consume one parameter and can be used with infix notation. For example `{person.name or 'John'}` is translated to `{person.name.or('John')}` and `{item.isActive ? item.name : 'Inactive item'}` is translated to `{item.isActive.ifTruthy(item.name).or('Inactive item')}`
+
+==== Arrays
+
+You can iterate over elements of an array with the <<loop_section>>. Moreover, it's also possible to get the length of the specified array and access the elements directly via an index value.
+
+.Array Examples
+[source,html]
+----
+<h1>Array of length: {myArray.length}</h1> <1>
+<ul>
+  <li>First: {myArray.0}</li> <2>
+  <li>Second: {myArray[1]}</li> <3>
+  <li>Third: {myArray.get(2)}</li> <4>
+</ul>
+<ol>
+ {#for element in myArray}
+ <li>{element}</li>
+ {/for}
+</ol>
+----
+<1> Outputs the length of the array.
+<2> Outputs the first element of the array.
+<3> Outputs the second element of the array using the bracket notation.
+<4> Outputs the third element of the array via the virtual method `get()`.
 
 ==== Character Escapes
 
@@ -482,6 +503,7 @@ A section helper that defines the logic of a section can "execute" any of the bl
 {/if}
 ----
 
+[[loop_section]]
 ==== Loop Section
 
 The loop section makes it possible to iterate over an instance of `Iterable`, `Map` 's entry set, `Stream` and an Integer.
@@ -758,10 +780,13 @@ This section might also come in handy when we'd like to avoid multiple expensive
 This section allows you to define named local variables:
 [source,html]
 ----
-{#let myParent=order.item.parent}
+{#let myParent=order.item.parent isActive=false age=10} <1>
   <h1>{myParent.name}</h1>
+  Is active: {isActive}
+  Age: {age}
 {/let}
 ----
+<1> The local variable is initialized with an expression that can also represent a <<literals,literal>>.
 
 The section tag is also registered under the `set` alias:
 
@@ -978,22 +1003,22 @@ Moreover, all templates located in the `src/main/resources/templates` directory 
 ----
 import io.quarkus.qute.Engine;
 import io.quarkus.qute.Template;
-import io.quarkus.qute.api.ResourcePath;
+import io.quarkus.qute.Location;
 
 class MyBean {
 
     @Inject 
     Template items; <1>
 
-    @ResourcePath("detail/items2_v1.html") <2>
+    @Location("detail/items2_v1.html") <2>
     Template items2;
 
     @Inject
     Engine engine; <3>
 }
 ----
-<1> If there is no `ResourcePath` qualifier provided, the field name is used to locate the template. In this particular case, the container will attempt to locate a template with path `src/main/resources/templates/items.html`.
-<2> The `ResourcePath` qualifier instructs the container to inject a template from a path relative from `src/main/resources/templates`. In this case, the full path is `src/main/resources/templates/detail/items2_v1.html`. 
+<1> If there is no `Location` qualifier provided, the field name is used to locate the template. In this particular case, the container will attempt to locate a template with path `src/main/resources/templates/items.html`.
+<2> The `Location` qualifier instructs the container to inject a template from a path relative from `src/main/resources/templates`. In this case, the full path is `src/main/resources/templates/detail/items2_v1.html`. 
 <3> Inject the configured `Engine` instance.
 
 It's also possible to contribute to the engine configuration via a CDI observer method.
@@ -1137,7 +1162,7 @@ import javax.ws.rs.core.MediaType;
 
 import io.quarkus.qute.TemplateInstance;
 import io.quarkus.qute.Template;
-import io.quarkus.qute.api.CheckedTemplate;
+import io.quarkus.qute.CheckedTemplate;
 
 @Path("item")
 public class ItemResource {
@@ -1168,7 +1193,7 @@ package org.acme.quarkus.sample;
 
 import io.quarkus.qute.TemplateInstance;
 import io.quarkus.qute.Template;
-import io.quarkus.qute.api.CheckedTemplate;
+import io.quarkus.qute.CheckedTemplate;
 
 @CheckedTemplate
 public class Templates {
@@ -1227,11 +1252,8 @@ The method name is used to match the property name by default.
 However, it is possible to specify the matching name with `TemplateExtension#matchName()`.
 A special constant - `TemplateExtension#ANY` - may be used to specify that the extension method matches any name.
 It is also possible to match the name against a regular expression specified in `TemplateExtension#matchRegex()`.
-In both cases, a string method parameter is used to pass the property name.
+In both cases, an additional string method parameter must be used to pass the property name.
 If both `matchName()` and `matchRegex()` are set the regular expression is used for matching.
-
-If a namespace is specified the method must declare at least one parameter and the first parameter must be a string. 
-If no namespace is specified the method must declare at least two parameters and the second parameter must be a string. 
 
 .Extension Method Example
 [source,java]
@@ -1502,7 +1524,7 @@ public class HelloResource {
     }
 }
 ----
-<1> If there is no `@ResourcePath` qualifier provided, the field name is used to locate the template. In this particular case, we're injecting a template with path `templates/hello.txt`.
+<1> If there is no `@Location` qualifier provided, the field name is used to locate the template. In this particular case, we're injecting a template with path `templates/hello.txt`.
 <2> `Template.data()` returns a new template instance that can be customized before the actual rendering is triggered. In this case, we put the name value under the key `name`. The data map is accessible during rendering. 
 <3> Note that we don't trigger the rendering - this is done automatically by a special `ContainerResponseFilter` implementation.
 
@@ -1656,6 +1678,47 @@ hello_name=Hallo {name}! <1> <2>
 ----
 <1> Each line in a localized file represents a message template. 
 <2> Keys and values are separated by the equals sign.
+
+Once we have the localized bundles defined we need a way to _select_ a correct bundle.
+If you use a message bundle expression in a template you'll have to specify the `locale` attribute of a template instance.
+
+.`locale` Attribute Example
+[source,java]
+----
+@Singleton
+public class MyBean {
+   
+    @Inject
+    Template hello;
+    
+    String render() {
+       return hello.instance().setAttribute("locale", Locale.forLanguageTag("cs")).render(); <1>
+    }
+}
+----
+<1> You can set a `Locale` instance or a locale tag string (IETF).
+
+
+NOTE: When using <<resteasy_integration,quarkus-resteasy-qute>> the `locale` attribute is derived from the the `Accept-Language` header if not set by a user.
+
+The `@Localized` qualifier can be used to inject a localized message bundle interface.
+
+.Injected Localized Message Bundle Example
+[source,java]
+----
+@Singleton
+public class MyBean {
+   
+    @Localized("cs") <1>
+    AppMessages msg;
+    
+    String render() {
+       return msg.hello_name("Jachym");
+    }
+}
+----
+<1> The annotation value is a locale tag string (IETF).
+
 
 === Configuration Reference
 

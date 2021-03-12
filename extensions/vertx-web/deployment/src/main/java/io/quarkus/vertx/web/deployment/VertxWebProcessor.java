@@ -1,7 +1,6 @@
 package io.quarkus.vertx.web.deployment;
 
 import static io.quarkus.deployment.annotations.ExecutionTime.RUNTIME_INIT;
-import static io.quarkus.vertx.web.deployment.DotNames.PARAM;
 import static org.objectweb.asm.Opcodes.ACC_FINAL;
 import static org.objectweb.asm.Opcodes.ACC_PRIVATE;
 import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
@@ -23,6 +22,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.enterprise.context.ContextNotActiveException;
@@ -85,6 +85,7 @@ import io.quarkus.gizmo.TryBlock;
 import io.quarkus.gizmo.WhileLoop;
 import io.quarkus.hibernate.validator.spi.BeanValidationAnnotationsBuildItem;
 import io.quarkus.runtime.LaunchMode;
+import io.quarkus.runtime.TemplateHtmlBuilder;
 import io.quarkus.runtime.util.HashUtil;
 import io.quarkus.vertx.http.deployment.FilterBuildItem;
 import io.quarkus.vertx.http.deployment.HttpRootPathBuildItem;
@@ -127,6 +128,8 @@ class VertxWebProcessor {
     private static final String SLASH = "/";
 
     private static final List<ParameterInjector> PARAM_INJECTORS = initParamInjectors();
+
+    private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("[a-zA-Z_0-9]+");
 
     @BuildStep
     FeatureBuildItem feature() {
@@ -419,9 +422,11 @@ class VertxWebProcessor {
             List<NotFoundPageDisplayableEndpointBuildItem> additionalEndpoints) {
         if (capabilities.isMissing(Capability.RESTEASY)) {
             // Register a special error handler if JAX-RS not available
-            recorder.registerNotFoundHandler(router.getRouter(), httpRoot.getRootPath(),
+            recorder.registerNotFoundHandler(router.getHttpRouter(), httpRoot.getRootPath(),
                     descriptions.stream().map(RouteDescriptionBuildItem::getDescription).collect(Collectors.toList()),
-                    additionalEndpoints.stream().map(NotFoundPageDisplayableEndpointBuildItem::getEndpoint)
+                    additionalEndpoints.stream()
+                            .map(s -> s.isAbsolutePath() ? s.getEndpoint()
+                                    : TemplateHtmlBuilder.adjustRoot(httpRoot.getRootPath(), s.getEndpoint()))
                             .collect(Collectors.toList()));
         }
     }
@@ -472,6 +477,7 @@ class VertxWebProcessor {
                                 "Route business method returning a Uni/Multi must have a generic parameter [method: %s, bean: %s]",
                                 method, bean));
             }
+            boolean canEndResponse = false;
             int idx = 0;
             int failureParams = 0;
             for (Type paramType : params) {
@@ -499,10 +505,23 @@ class VertxWebProcessor {
                             injector.getTargetHandlerType(), idx, method, bean));
                 }
 
+                // A param injector may validate the parameter annotations
+                injector.validate(bean, method, routeAnnotation, paramType, paramAnnotations);
+
+                if (injector.canEndResponse) {
+                    canEndResponse = true;
+                }
+
                 if (Route.HandlerType.FAILURE == handlerType && isThrowable(paramType, index)) {
                     failureParams++;
                 }
                 idx++;
+            }
+
+            if (method.returnType().kind() == Kind.VOID && !canEndResponse) {
+                throw new IllegalStateException(String.format(
+                        "Route method that returns void must accept at least one parameter that can end the response [method: %s, bean: %s]",
+                        method, bean));
             }
 
             if (failureParams > 1) {
@@ -530,14 +549,15 @@ class VertxWebProcessor {
         } else {
             baseName = io.quarkus.arc.processor.DotNames.simpleName(bean.getImplClazz().name());
         }
-        String targetPackage = io.quarkus.arc.processor.DotNames.packageName(bean.getImplClazz().name());
+        String targetPackage = io.quarkus.arc.processor.DotNames
+                .internalPackageNameWithTrailingSlash(bean.getImplClazz().name());
 
         StringBuilder sigBuilder = new StringBuilder();
         sigBuilder.append(method.name()).append("_").append(method.returnType().name().toString());
         for (Type i : method.parameters()) {
             sigBuilder.append(i.name().toString());
         }
-        String generatedName = targetPackage.replace('.', '/') + "/" + baseName + HANDLER_SUFFIX + "_" + method.name() + "_"
+        String generatedName = targetPackage + baseName + HANDLER_SUFFIX + "_" + method.name() + "_"
                 + HashUtil.sha1(sigBuilder.toString() + hashSuffix);
 
         ClassCreator invokerCreator = ClassCreator.builder().classOutput(classOutput).className(generatedName)
@@ -1122,17 +1142,18 @@ class VertxWebProcessor {
     static List<ParameterInjector> initParamInjectors() {
         List<ParameterInjector> injectors = new ArrayList<>();
 
-        injectors.add(ParameterInjector.builder().matchType(io.quarkus.vertx.web.deployment.DotNames.ROUTING_CONTEXT)
-                .resultHandleProvider(new ResultHandleProvider() {
-                    @Override
-                    public ResultHandle get(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
-                            ResultHandle routingContext, MethodCreator invoke, int position,
-                            BuildProducer<ReflectiveHierarchyBuildItem> reflectiveHierarchy) {
-                        return routingContext;
-                    }
-                }).build());
+        injectors.add(
+                ParameterInjector.builder().canEndResponse().matchType(io.quarkus.vertx.web.deployment.DotNames.ROUTING_CONTEXT)
+                        .resultHandleProvider(new ResultHandleProvider() {
+                            @Override
+                            public ResultHandle get(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
+                                    ResultHandle routingContext, MethodCreator invoke, int position,
+                                    BuildProducer<ReflectiveHierarchyBuildItem> reflectiveHierarchy) {
+                                return routingContext;
+                            }
+                        }).build());
 
-        injectors.add(ParameterInjector.builder().matchType(DotNames.ROUTING_EXCHANGE)
+        injectors.add(ParameterInjector.builder().canEndResponse().matchType(DotNames.ROUTING_EXCHANGE)
                 .resultHandleProvider(new ResultHandleProvider() {
                     @Override
                     public ResultHandle get(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
@@ -1145,7 +1166,7 @@ class VertxWebProcessor {
                     }
                 }).build());
 
-        injectors.add(ParameterInjector.builder().matchType(DotNames.HTTP_SERVER_REQUEST)
+        injectors.add(ParameterInjector.builder().canEndResponse().matchType(DotNames.HTTP_SERVER_REQUEST)
                 .resultHandleProvider(new ResultHandleProvider() {
                     @Override
                     public ResultHandle get(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
@@ -1157,7 +1178,7 @@ class VertxWebProcessor {
                     }
                 }).build());
 
-        injectors.add(ParameterInjector.builder().matchType(DotNames.HTTP_SERVER_RESPONSE)
+        injectors.add(ParameterInjector.builder().canEndResponse().matchType(DotNames.HTTP_SERVER_RESPONSE)
                 .resultHandleProvider(new ResultHandleProvider() {
                     @Override
                     public ResultHandle get(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
@@ -1169,7 +1190,7 @@ class VertxWebProcessor {
                     }
                 }).build());
 
-        injectors.add(ParameterInjector.builder().matchType(DotNames.MUTINY_HTTP_SERVER_REQUEST)
+        injectors.add(ParameterInjector.builder().canEndResponse().matchType(DotNames.MUTINY_HTTP_SERVER_REQUEST)
                 .resultHandleProvider(new ResultHandleProvider() {
                     @Override
                     public ResultHandle get(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
@@ -1186,7 +1207,7 @@ class VertxWebProcessor {
                 }).build());
 
         injectors
-                .add(ParameterInjector.builder().matchType(DotNames.MUTINY_HTTP_SERVER_RESPONSE)
+                .add(ParameterInjector.builder().canEndResponse().matchType(DotNames.MUTINY_HTTP_SERVER_RESPONSE)
                         .resultHandleProvider(new ResultHandleProvider() {
                             @Override
                             public ResultHandle get(MethodInfo method, Type paramType,
@@ -1207,8 +1228,34 @@ class VertxWebProcessor {
                 .matchType(io.quarkus.arc.processor.DotNames.STRING)
                 .matchOptionalOf(io.quarkus.arc.processor.DotNames.STRING)
                 .matchListOf(io.quarkus.arc.processor.DotNames.STRING)
-                .requireAnnotations(PARAM)
-                .resultHandleProvider(new ParamAndHeaderProvider(PARAM, Methods.REQUEST_PARAMS, Methods.REQUEST_GET_PARAM))
+                .requireAnnotations(DotNames.PARAM)
+                .resultHandleProvider(
+                        new ParamAndHeaderProvider(DotNames.PARAM, Methods.REQUEST_PARAMS, Methods.REQUEST_GET_PARAM))
+                .validate(new ParamValidator() {
+                    @Override
+                    public void validate(BeanInfo bean, MethodInfo method, AnnotationInstance routeAnnotation, Type paramType,
+                            Set<AnnotationInstance> paramAnnotations) {
+                        AnnotationInstance paramAnnotation = Annotations.find(paramAnnotations, DotNames.PARAM);
+                        AnnotationValue paramNameValue = paramAnnotation.value();
+                        if (paramNameValue != null && !paramNameValue.asString().equals(Param.ELEMENT_NAME)) {
+                            String paramName = paramNameValue.asString();
+                            AnnotationValue regexValue = routeAnnotation.value(VALUE_REGEX);
+                            AnnotationValue pathValue = routeAnnotation.value(VALUE_PATH);
+                            if (regexValue == null && pathValue != null) {
+                                String path = pathValue.asString();
+                                // Validate the name if used as a path parameter
+                                if (path.contains(":" + paramName) && !PATH_PARAM_PATTERN.matcher(paramName).matches()) {
+                                    // TODO This requirement should be relaxed in vertx 4.0.3+
+                                    // https://github.com/vert-x3/vertx-web/pull/1881
+                                    throw new IllegalStateException(String.format(
+                                            "A path param name must only contain word characters (a-zA-Z_0-9): %s [route method %s declared on %s]",
+                                            paramName,
+                                            method, bean.getBeanClass()));
+                                }
+                            }
+                        }
+                    }
+                })
                 .build());
 
         injectors.add(ParameterInjector.builder().matchPrimitiveWrappers()
@@ -1393,6 +1440,8 @@ class VertxWebProcessor {
         final TriPredicate<Type, Set<AnnotationInstance>, IndexView> predicate;
         final ResultHandleProvider provider;
         final Route.HandlerType targetHandlerType;
+        final ParamValidator validator;
+        final boolean canEndResponse;
 
         ParameterInjector(ParameterInjector.Builder builder) {
             if (builder.predicate != null) {
@@ -1457,6 +1506,8 @@ class VertxWebProcessor {
             }
             this.provider = builder.provider;
             this.targetHandlerType = builder.targetHandlerType;
+            this.validator = builder.validator;
+            this.canEndResponse = builder.canEndResponse;
         }
 
         boolean matches(Type paramType, Set<AnnotationInstance> paramAnnotations, IndexView index) {
@@ -1465,6 +1516,13 @@ class VertxWebProcessor {
 
         Route.HandlerType getTargetHandlerType() {
             return targetHandlerType;
+        }
+
+        void validate(BeanInfo bean, MethodInfo method, AnnotationInstance routeInstance, Type paramType,
+                Set<AnnotationInstance> paramAnnotations) {
+            if (validator != null) {
+                validator.validate(bean, method, routeInstance, paramType, paramAnnotations);
+            }
         }
 
         ResultHandle getResultHandle(MethodInfo method, Type paramType, Set<AnnotationInstance> annotations,
@@ -1482,6 +1540,8 @@ class VertxWebProcessor {
             List<DotName> requiredAnnotationNames = Collections.emptyList();
             ResultHandleProvider provider;
             Route.HandlerType targetHandlerType;
+            ParamValidator validator;
+            boolean canEndResponse;
 
             Builder matchType(DotName className) {
                 return matchType(Type.create(className, Kind.CLASS));
@@ -1559,6 +1619,16 @@ class VertxWebProcessor {
                 return this;
             }
 
+            Builder validate(ParamValidator validator) {
+                this.validator = validator;
+                return this;
+            }
+
+            Builder canEndResponse() {
+                this.canEndResponse = true;
+                return this;
+            }
+
             ParameterInjector build() {
                 return new ParameterInjector(this);
             }
@@ -1626,6 +1696,14 @@ class VertxWebProcessor {
     interface TriPredicate<A, B, C> {
 
         boolean test(A a, B b, C c);
+
+    }
+
+    @FunctionalInterface
+    interface ParamValidator {
+
+        void validate(BeanInfo bean, MethodInfo method, AnnotationInstance routeAnnotation, Type paramType,
+                Set<AnnotationInstance> paramAnnotations);
 
     }
 

@@ -66,6 +66,7 @@ import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.BeanArchiveIndexBuildItem;
 import io.quarkus.arc.deployment.BeanContainerBuildItem;
 import io.quarkus.arc.deployment.GeneratedBeanBuildItem;
+import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.runtime.BeanContainer;
 import io.quarkus.arc.runtime.ClientProxyUnwrapper;
 import io.quarkus.deployment.Capabilities;
@@ -96,6 +97,7 @@ import io.quarkus.resteasy.reactive.common.deployment.ServerDefaultProducesHandl
 import io.quarkus.resteasy.reactive.common.runtime.ResteasyReactiveConfig;
 import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveInitialiser;
 import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveRecorder;
+import io.quarkus.resteasy.reactive.server.runtime.ResteasyReactiveRuntimeRecorder;
 import io.quarkus.resteasy.reactive.server.runtime.ServerVertxBufferMessageBodyWriter;
 import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.AuthenticationCompletionExceptionMapper;
 import io.quarkus.resteasy.reactive.server.runtime.exceptionmappers.AuthenticationFailedExceptionMapper;
@@ -118,6 +120,7 @@ import io.quarkus.security.UnauthorizedException;
 import io.quarkus.vertx.http.deployment.RouteBuildItem;
 import io.quarkus.vertx.http.runtime.BasicRoute;
 import io.quarkus.vertx.http.runtime.HttpBuildTimeConfig;
+import io.quarkus.vertx.http.runtime.HttpConfiguration;
 import io.quarkus.vertx.http.runtime.VertxHttpRecorder;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
@@ -202,6 +205,17 @@ public class ResteasyReactiveProcessor {
     }
 
     @BuildStep
+    public void unremoveableBeans(Optional<ResourceScanningResultBuildItem> resourceScanningResultBuildItem,
+            BuildProducer<UnremovableBeanBuildItem> unremoveableBeans) {
+        if (!resourceScanningResultBuildItem.isPresent()) {
+            return;
+        }
+        Set<String> beanParams = resourceScanningResultBuildItem.get().getResult()
+                .getBeanParams();
+        unremoveableBeans.produce(UnremovableBeanBuildItem.beanClassNames(beanParams.toArray(new String[0])));
+    }
+
+    @BuildStep
     @Record(ExecutionTime.STATIC_INIT)
     public void setupEndpoints(Capabilities capabilities, BeanArchiveIndexBuildItem beanArchiveIndexBuildItem,
             BeanContainerBuildItem beanContainerBuildItem,
@@ -209,6 +223,7 @@ public class ResteasyReactiveProcessor {
             Optional<ResourceScanningResultBuildItem> resourceScanningResultBuildItem,
             BuildProducer<GeneratedClassBuildItem> generatedClassBuildItemBuildProducer,
             BuildProducer<BytecodeTransformerBuildItem> bytecodeTransformerBuildItemBuildProducer,
+            BuildProducer<ReflectiveClassBuildItem> reflectiveClassBuildItemBuildProducer,
             ResteasyReactiveRecorder recorder,
             RecorderContext recorderContext,
             ShutdownContextBuildItem shutdownContext,
@@ -229,7 +244,8 @@ public class ResteasyReactiveProcessor {
             ExceptionMappersBuildItem exceptionMappersBuildItem,
             ParamConverterProvidersBuildItem paramConverterProvidersBuildItem,
             ContextResolversBuildItem contextResolversBuildItem,
-            List<MethodScannerBuildItem> methodScanners) throws NoSuchMethodException {
+            List<MethodScannerBuildItem> methodScanners, ResteasyReactiveServerConfig serverConfig)
+            throws NoSuchMethodException {
 
         if (!resourceScanningResultBuildItem.isPresent()) {
             // no detected @Path, bail out
@@ -255,9 +271,7 @@ public class ResteasyReactiveProcessor {
         Map<DotName, String> pathInterfaces = result.getPathInterfaces();
 
         ApplicationScanningResult appResult = applicationResultBuildItem.getResult();
-        Set<String> allowedClasses = appResult.getAllowedClasses();
         Set<String> singletonClasses = appResult.getSingletonClasses();
-        boolean filterClasses = appResult.isFilterClasses();
         Application application = appResult.getApplication();
 
         Map<String, String> existingConverters = new HashMap<>();
@@ -293,6 +307,7 @@ public class ResteasyReactiveProcessor {
                     .setEndpointInvokerFactory(new QuarkusInvokerFactory(generatedClassBuildItemBuildProducer, recorder))
                     .setGeneratedClassBuildItemBuildProducer(generatedClassBuildItemBuildProducer)
                     .setBytecodeTransformerBuildProducer(bytecodeTransformerBuildItemBuildProducer)
+                    .setReflectiveClassProducer(reflectiveClassBuildItemBuildProducer)
                     .setExistingConverters(existingConverters).setScannedResourcePaths(scannedResourcePaths)
                     .setConfig(new org.jboss.resteasy.reactive.common.ResteasyReactiveConfig(
                             config.inputBufferSize.asLongValue(), config.singleDefaultProduces, config.defaultProduces))
@@ -365,7 +380,7 @@ public class ResteasyReactiveProcessor {
             serverEndpointIndexer = serverEndpointIndexerBuilder.build();
 
             for (ClassInfo i : scannedResources.values()) {
-                if (filterClasses && !allowedClasses.contains(i.name().toString())) {
+                if (!appResult.keepClass(i.name().toString())) {
                     continue;
                 }
                 ResourceClass endpoints = serverEndpointIndexer.createEndpoints(i);
@@ -381,6 +396,15 @@ public class ResteasyReactiveProcessor {
             Deque<ClassInfo> toScan = new ArrayDeque<>();
             for (DotName methodAnnotation : result.getHttpAnnotationToMethod().keySet()) {
                 for (AnnotationInstance instance : index.getAnnotations(methodAnnotation)) {
+                    MethodInfo method = instance.target().asMethod();
+                    ClassInfo classInfo = method.declaringClass();
+                    toScan.add(classInfo);
+                }
+            }
+            //sub resources can also have just a path annotation
+            //if they are 'intermediate' sub resources
+            for (AnnotationInstance instance : index.getAnnotations(ResteasyReactiveDotNames.PATH)) {
+                if (instance.target().kind() == AnnotationTarget.Kind.METHOD) {
                     MethodInfo method = instance.target().asMethod();
                     ClassInfo classInfo = method.declaringClass();
                     toScan.add(classInfo);
@@ -459,7 +483,7 @@ public class ResteasyReactiveProcessor {
             BeanFactory<ResteasyReactiveInitialiser> initClassFactory = recorder.factory(QUARKUS_INIT_CLASS,
                     beanContainerBuildItem.getValue());
 
-            String applicationPath = determineApplicationPath(index);
+            String applicationPath = determineApplicationPath(index, serverConfig.path);
             // spec allows the path contain encoded characters
             if ((applicationPath != null) && applicationPath.contains("%")) {
                 applicationPath = Encode.decodePath(applicationPath);
@@ -511,6 +535,17 @@ public class ResteasyReactiveProcessor {
     }
 
     @BuildStep
+    @Record(ExecutionTime.RUNTIME_INIT)
+    public void applyRuntimeConfig(ResteasyReactiveRuntimeRecorder recorder,
+            Optional<ResteasyReactiveDeploymentBuildItem> deployment,
+            HttpConfiguration httpConfiguration) {
+        if (!deployment.isPresent()) {
+            return;
+        }
+        recorder.configure(deployment.get().getDeployment(), httpConfiguration);
+    }
+
+    @BuildStep
     public void securityExceptionMappers(BuildProducer<ExceptionMapperBuildItem> exceptionMapperBuildItemBuildProducer) {
         // built-ins
         exceptionMapperBuildItemBuildProducer.produce(new ExceptionMapperBuildItem(
@@ -545,10 +580,10 @@ public class ResteasyReactiveProcessor {
         });
     }
 
-    private String determineApplicationPath(IndexView index) {
+    private String determineApplicationPath(IndexView index, Optional<String> defaultPath) {
         Collection<AnnotationInstance> applicationPaths = index.getAnnotations(ResteasyReactiveDotNames.APPLICATION_PATH);
         if (applicationPaths.isEmpty()) {
-            return null;
+            return defaultPath.orElse("/");
         }
         // currently we only examine the first class that is annotated with @ApplicationPath so best
         // fail if the user code has multiple such annotations instead of surprising the user

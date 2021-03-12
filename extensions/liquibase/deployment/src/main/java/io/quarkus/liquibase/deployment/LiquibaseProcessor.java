@@ -3,6 +3,7 @@ package io.quarkus.liquibase.deployment;
 import static io.quarkus.deployment.annotations.ExecutionTime.STATIC_INIT;
 
 import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -14,7 +15,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import javax.enterprise.context.Dependent;
+import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.inject.Default;
 
 import org.jboss.logging.Logger;
@@ -36,12 +37,13 @@ import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.CapabilityBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
+import io.quarkus.deployment.builditem.SystemPropertyBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBundleBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.RuntimeInitializedClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ServiceProviderBuildItem;
-import io.quarkus.deployment.pkg.steps.NativeBuild;
+import io.quarkus.deployment.pkg.steps.NativeOrNativeSourcesBuild;
 import io.quarkus.deployment.util.ServiceUtil;
 import io.quarkus.liquibase.LiquibaseDataSource;
 import io.quarkus.liquibase.LiquibaseFactory;
@@ -72,7 +74,15 @@ class LiquibaseProcessor {
         return new CapabilityBuildItem(Capability.LIQUIBASE);
     }
 
-    @BuildStep(onlyIf = NativeBuild.class)
+    @BuildStep
+    public SystemPropertyBuildItem disableHub() {
+        // Don't block app startup with prompt:
+        // Do you want to see this operation's report in Liquibase Hub, which improves team collaboration?
+        // If so, enter your email. If not, enter [N] to no longer be prompted, or [S] to skip for now, but ask again next time (default "S"):
+        return new SystemPropertyBuildItem("liquibase.hub.mode", "off");
+    }
+
+    @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     @Record(STATIC_INIT)
     void nativeImageConfiguration(
             LiquibaseRecorder recorder,
@@ -210,7 +220,7 @@ class LiquibaseProcessor {
         for (String dataSourceName : dataSourceNames) {
             SyntheticBeanBuildItem.ExtendedBeanConfigurator configurator = SyntheticBeanBuildItem
                     .configure(LiquibaseFactory.class)
-                    .scope(Dependent.class) // this is what the existing code does, but it doesn't seem reasonable
+                    .scope(ApplicationScoped.class) // this is what the existing code does, but it doesn't seem reasonable
                     .setRuntimeInit()
                     .unremovable()
                     .supplier(recorder.liquibaseSupplier(dataSourceName));
@@ -312,7 +322,7 @@ class LiquibaseProcessor {
                     result.add(changeSet.getFilePath());
 
                     changeSet.getChanges().stream()
-                            .map(this::extractChangeFile)
+                            .map(change -> extractChangeFile(change, changeSet.getFilePath()))
                             .forEach(changeFile -> changeFile.ifPresent(result::add));
 
                     // get all parents of the changeSet
@@ -331,19 +341,38 @@ class LiquibaseProcessor {
         return Collections.emptySet();
     }
 
-    private Optional<String> extractChangeFile(Change change) {
+    private Optional<String> extractChangeFile(Change change, String changeSetFilePath) {
+        String path = null;
+        Boolean relative = null;
         if (change instanceof LoadDataChange) {
-            return Optional.of(((LoadDataChange) change).getFile());
+            LoadDataChange loadDataChange = (LoadDataChange) change;
+            path = loadDataChange.getFile();
+            relative = loadDataChange.isRelativeToChangelogFile();
+        } else if (change instanceof SQLFileChange) {
+            SQLFileChange sqlFileChange = (SQLFileChange) change;
+            path = sqlFileChange.getPath();
+            relative = sqlFileChange.isRelativeToChangelogFile();
+        } else if (change instanceof CreateProcedureChange) {
+            CreateProcedureChange createProcedureChange = (CreateProcedureChange) change;
+            path = createProcedureChange.getPath();
+            relative = createProcedureChange.isRelativeToChangelogFile();
+        } else if (change instanceof CreateViewChange) {
+            CreateViewChange createViewChange = (CreateViewChange) change;
+            path = createViewChange.getPath();
+            relative = createViewChange.getRelativeToChangelogFile();
         }
-        if (change instanceof SQLFileChange) {
-            return Optional.of(((SQLFileChange) change).getPath());
+
+        // unrelated change or change does not reference a file (e.g. inline view)
+        if (path == null) {
+            return Optional.empty();
         }
-        if (change instanceof CreateProcedureChange) {
-            return Optional.of(((CreateProcedureChange) change).getPath());
+        // absolute file path or changeSet has no file path
+        if (relative == null || !relative || changeSetFilePath == null) {
+            return Optional.of(path);
         }
-        if (change instanceof CreateViewChange) {
-            return Optional.of(((CreateViewChange) change).getPath());
-        }
-        return Optional.empty();
+
+        // relative file path needs to be resolved against changeSetFilePath
+        // notes: ClassLoaderResourceAccessor does not provide a suitable method and CLRA.getFinalPath() is not visible
+        return Optional.of(Paths.get(changeSetFilePath).resolveSibling(path).toString().replace('\\', '/'));
     }
 }

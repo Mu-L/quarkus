@@ -3,6 +3,7 @@ package io.quarkus.qute;
 import static io.quarkus.qute.Booleans.isFalsy;
 
 import io.quarkus.qute.Results.Result;
+import java.lang.reflect.Array;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 
 /**
@@ -77,7 +79,7 @@ public final class ValueResolvers {
     }
 
     /**
-     * Returns the default value if the base object is null or {@link Result#NOT_FOUND}.
+     * Returns the default value if the base object is null or {@link Result#NOT_FOUND} and the base object otherwise.
      * 
      * {@code foo.or(bar)}, {@code foo or true}, {@code name ?: 'elvis'}
      */
@@ -117,18 +119,22 @@ public final class ValueResolvers {
         return new ValueResolver() {
 
             public boolean appliesTo(EvalContext context) {
-                return (context.getBase() == null || Results.Result.NOT_FOUND.equals(context.getBase()))
-                        && context.getName().equals("orEmpty");
+                return context.getParams().isEmpty() && context.getName().equals("orEmpty");
             }
 
             @Override
             public CompletionStage<Object> resolve(EvalContext context) {
-                return empty;
+                if (context.getBase() == null || Results.Result.NOT_FOUND.equals(context.getBase())) {
+                    return empty;
+                }
+                return CompletableFuture.completedFuture(context.getBase());
             }
         };
     }
 
     /**
+     * Returns {@link Result#NOT_FOUND} if the base object is falsy and the base object otherwise.
+     * <p>
      * Can be used together with {@link #orResolver()} to form a ternary operator.
      * 
      * {@code person.isElvis ? 'elvis' : notElvis}
@@ -137,8 +143,16 @@ public final class ValueResolvers {
         return new ValueResolver() {
 
             public boolean appliesTo(EvalContext context) {
-                return context.getParams().size() == 1
-                        && ("?".equals(context.getName()));
+                if (context.getParams().size() != 1) {
+                    return false;
+                }
+                switch (context.getName()) {
+                    case "?":
+                    case "ifTruthy":
+                        return true;
+                    default:
+                        return false;
+                }
             }
 
             @Override
@@ -185,7 +199,10 @@ public final class ValueResolvers {
         return new ValueResolver() {
 
             public boolean appliesTo(EvalContext context) {
-                return context.getBase() instanceof Mapper;
+                if (context.getBase() instanceof Mapper && context.getParams().isEmpty()) {
+                    return ((Mapper) context.getBase()).appliesTo(context.getName());
+                }
+                return false;
             }
 
             @Override
@@ -258,6 +275,56 @@ public final class ValueResolvers {
                         });
             }
 
+        };
+    }
+
+    public static ValueResolver arrayResolver() {
+        return new ValueResolver() {
+
+            public boolean appliesTo(EvalContext context) {
+                return context.getBase() != null && context.getBase().getClass().isArray();
+            }
+
+            @Override
+            public CompletionStage<Object> resolve(EvalContext context) {
+                String name = context.getName();
+                if (name.equals("length")) {
+                    return CompletableFuture.completedFuture(Array.getLength(context.getBase()));
+                } else if (name.equals("get")) {
+                    if (context.getParams().isEmpty()) {
+                        throw new IllegalArgumentException("Index parameter is missing");
+                    }
+                    Expression indexExpr = context.getParams().get(0);
+                    if (indexExpr.isLiteral()) {
+                        Object literalValue;
+                        try {
+                            literalValue = indexExpr.getLiteralValue().get();
+                            if (literalValue instanceof Integer) {
+                                return CompletableFuture.completedFuture(Array.get(context.getBase(), (Integer) literalValue));
+                            }
+                            return Results.NOT_FOUND;
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new RuntimeException(e);
+                        }
+                    } else {
+                        return context.evaluate(indexExpr).thenCompose(idx -> {
+                            if (idx instanceof Integer) {
+                                return CompletableFuture.completedFuture(Array.get(context.getBase(), (Integer) idx));
+                            }
+                            return Results.NOT_FOUND;
+                        });
+                    }
+                } else {
+                    // Try to use the name as an index
+                    int index;
+                    try {
+                        index = Integer.parseInt(name);
+                    } catch (NumberFormatException e) {
+                        return Results.NOT_FOUND;
+                    }
+                    return CompletableFuture.completedFuture(Array.get(context.getBase(), index));
+                }
+            }
         };
     }
 

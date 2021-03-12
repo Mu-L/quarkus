@@ -11,9 +11,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.binder.http.Outcome;
+import io.quarkus.micrometer.runtime.binder.HttpBinderConfiguration;
 import io.quarkus.micrometer.runtime.binder.HttpMetricsCommon;
 import io.quarkus.micrometer.runtime.binder.HttpRequestMetric;
-import io.quarkus.micrometer.runtime.config.runtime.VertxConfig;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpMethod;
@@ -42,14 +42,14 @@ public class VertxHttpServerMetrics extends VertxTcpMetrics
     final String nameHttpServerPush;
     final String nameHttpServerRequests;
 
-    VertxHttpServerMetrics(MeterRegistry registry, VertxConfig config) {
+    VertxHttpServerMetrics(MeterRegistry registry, HttpBinderConfiguration config) {
         super(registry, "http.server");
         nameWebsocketConnections = "http.server.websocket.connections";
         nameHttpServerPush = "http.server.push";
         nameHttpServerRequests = "http.server.requests";
 
-        ignorePatterns = HttpMetricsCommon.getIgnorePatterns(config.ignorePatterns);
-        matchPatterns = HttpMetricsCommon.getMatchPatterns(config.matchPatterns);
+        ignorePatterns = config.getServerIgnorePatterns();
+        matchPatterns = config.getServerMatchPatterns();
     }
 
     /**
@@ -93,8 +93,7 @@ public class VertxHttpServerMetrics extends VertxTcpMetrics
     @Override
     public HttpRequestMetric responsePushed(Map<String, Object> socketMetric, HttpMethod method, String uri,
             HttpServerResponse response) {
-        HttpRequestMetric requestMetric = new HttpRequestMetric();
-        requestMetric.parseUriPath(matchPatterns, ignorePatterns, uri);
+        HttpRequestMetric requestMetric = new HttpRequestMetric(matchPatterns, ignorePatterns, uri);
         if (requestMetric.isMeasure()) {
             registry.counter(nameHttpServerPush, Tags.of(
                     HttpMetricsCommon.uri(requestMetric.getPath(), response.getStatusCode()),
@@ -118,11 +117,10 @@ public class VertxHttpServerMetrics extends VertxTcpMetrics
      */
     @Override
     public HttpRequestMetric requestBegin(Map<String, Object> socketMetric, HttpServerRequest request) {
-        HttpRequestMetric requestMetric = new HttpRequestMetric();
+        // evaluate and remember the path to monitor for use later (maybe a 404 or redirect..)
+        HttpRequestMetric requestMetric = new HttpRequestMetric(matchPatterns, ignorePatterns, request.path());
         setRequestMetric(Vertx.currentContext(), requestMetric);
 
-        // evaluate and remember the path to monitor for use later (maybe a 404 or redirect..)
-        requestMetric.parseUriPath(matchPatterns, ignorePatterns, request.path());
         if (requestMetric.isMeasure()) {
             // If we're measuring this request, create/remember the sample
             requestMetric.setSample(Timer.start(registry));

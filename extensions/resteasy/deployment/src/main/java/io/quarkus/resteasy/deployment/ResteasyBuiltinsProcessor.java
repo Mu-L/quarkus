@@ -31,6 +31,10 @@ import io.quarkus.resteasy.runtime.JaxRsSecurityConfig;
 import io.quarkus.resteasy.runtime.NotFoundExceptionMapper;
 import io.quarkus.resteasy.runtime.SecurityContextFilter;
 import io.quarkus.resteasy.runtime.UnauthorizedExceptionMapper;
+import io.quarkus.resteasy.runtime.vertx.JsonArrayReader;
+import io.quarkus.resteasy.runtime.vertx.JsonArrayWriter;
+import io.quarkus.resteasy.runtime.vertx.JsonObjectReader;
+import io.quarkus.resteasy.runtime.vertx.JsonObjectWriter;
 import io.quarkus.resteasy.server.common.deployment.ResteasyDeploymentBuildItem;
 import io.quarkus.security.spi.AdditionalSecuredClassesBuildIem;
 import io.quarkus.vertx.http.deployment.HttpRootPathBuildItem;
@@ -86,6 +90,16 @@ public class ResteasyBuiltinsProcessor {
         }
     }
 
+    @BuildStep
+    void vertxProviders(BuildProducer<ResteasyJaxrsProviderBuildItem> providers, Capabilities capabilities) {
+        if (capabilities.isPresent(Capability.JACKSON)) {
+            providers.produce(new ResteasyJaxrsProviderBuildItem(JsonArrayReader.class.getName()));
+            providers.produce(new ResteasyJaxrsProviderBuildItem(JsonArrayWriter.class.getName()));
+            providers.produce(new ResteasyJaxrsProviderBuildItem(JsonObjectReader.class.getName()));
+            providers.produce(new ResteasyJaxrsProviderBuildItem(JsonObjectWriter.class.getName()));
+        }
+    }
+
     @Record(STATIC_INIT)
     @BuildStep(onlyIf = IsDevelopment.class)
     void setupExceptionMapper(BuildProducer<ResteasyJaxrsProviderBuildItem> providers, HttpRootPathBuildItem httpRoot,
@@ -112,7 +126,7 @@ public class ResteasyBuiltinsProcessor {
         List<AdditionalRouteDescription> endpoints = displayableEndpoints
                 .stream()
                 .map(displayableAdditionalBuildItem -> new AdditionalRouteDescription(
-                        displayableAdditionalBuildItem.getEndpoint(), displayableAdditionalBuildItem.getDescription()))
+                        displayableAdditionalBuildItem.getEndpoint(httpRoot), displayableAdditionalBuildItem.getDescription()))
                 .sorted()
                 .collect(Collectors.toList());
 

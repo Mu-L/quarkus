@@ -38,6 +38,8 @@ import org.jboss.resteasy.reactive.common.processor.EndpointIndexer;
 import org.jboss.resteasy.reactive.common.processor.ResteasyReactiveDotNames;
 import org.jboss.resteasy.reactive.server.core.parameters.ParameterExtractor;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.ListConverter;
+import org.jboss.resteasy.reactive.server.core.parameters.converters.LocalDateParamConverter;
+import org.jboss.resteasy.reactive.server.core.parameters.converters.OptionalConverter;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.ParameterConverterSupplier;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.PathSegmentParamConverter;
 import org.jboss.resteasy.reactive.server.core.parameters.converters.SetConverter;
@@ -129,6 +131,15 @@ public class ServerEndpointIndexer
         }
         serverResourceMethod.setHandlerChainCustomizers(methodCustomizers);
         return serverResourceMethod;
+    }
+
+    @Override
+    protected boolean handleBeanParam(ClassInfo actualEndpointInfo, Type paramType, MethodParameter[] methodParameters, int i) {
+        ClassInfo beanParamClassInfo = index.getClassByName(paramType.name());
+        InjectableBean injectableBean = scanInjectableBean(beanParamClassInfo,
+                actualEndpointInfo,
+                existingConverters, additionalReaders, injectableBeans, hasRuntimeConverters);
+        return injectableBean.isFormParamRequired();
     }
 
     @Override
@@ -230,7 +241,7 @@ public class ServerEndpointIndexer
         return new ServerMethodParameter(name,
                 elementType, toClassName(paramType, currentClassInfo, actualEndpointInfo, index),
                 type, single, signature,
-                converter, defaultValue, parameterResult.isObtainedAsCollection(), encoded,
+                converter, defaultValue, parameterResult.isObtainedAsCollection(), parameterResult.isOptional(), encoded,
                 parameterResult.getCustomerParameterExtractor());
     }
 
@@ -245,6 +256,13 @@ public class ServerEndpointIndexer
         ParameterConverterSupplier converter = extractConverter(elementType, index,
                 existingConverters, errorLocation, hasRuntimeConverters);
         builder.setConverter(new SortedSetConverter.SortedSetSupplier(converter));
+    }
+
+    protected void handleOptionalParam(Map<String, String> existingConverters, String errorLocation,
+            boolean hasRuntimeConverters, ServerIndexedParameter builder, String elementType) {
+        ParameterConverterSupplier converter = extractConverter(elementType, index,
+                existingConverters, errorLocation, hasRuntimeConverters);
+        builder.setConverter(new OptionalConverter.OptionalSupplier(converter));
     }
 
     protected void handleSetParam(Map<String, String> existingConverters, String errorLocation, boolean hasRuntimeConverters,
@@ -263,6 +281,10 @@ public class ServerEndpointIndexer
 
     protected void handlePathSegmentParam(ServerIndexedParameter builder) {
         builder.setConverter(new PathSegmentParamConverter.Supplier());
+    }
+
+    protected void handleLocalDateParam(ServerIndexedParameter builder) {
+        builder.setConverter(new LocalDateParamConverter.Supplier());
     }
 
     protected ParameterConverterSupplier extractConverter(String elementType, IndexView indexView,

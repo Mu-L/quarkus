@@ -221,7 +221,7 @@ public class UndertowDeploymentRecorder {
             public void handleNotification(SecurityNotification notification) {
                 if (notification.getEventType() == SecurityNotification.EventType.AUTHENTICATED) {
                     QuarkusUndertowAccount account = (QuarkusUndertowAccount) notification.getAccount();
-                    CDI.current().getBeanManager().fireEvent(account.getSecurityIdentity());
+                    CDI.current().select(CurrentIdentityAssociation.class).get().setIdentity(account.getSecurityIdentity());
                 }
             }
         });
@@ -374,7 +374,9 @@ public class UndertowDeploymentRecorder {
         return new Handler<RoutingContext>() {
             @Override
             public void handle(RoutingContext event) {
-                event.request().pause();
+                if (!event.request().isEnded()) {
+                    event.request().pause();
+                }
                 //we handle auth failure directly
                 event.remove(QuarkusHttpUser.AUTH_FAILURE_HANDLER);
                 VertxHttpExchange exchange = new VertxHttpExchange(event.request(), allocator, executorService, event,

@@ -25,12 +25,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import com.google.common.collect.Sets;
 
 import io.quarkus.devtools.PlatformAwareTestBase;
-import io.quarkus.devtools.ProjectTestUtil;
 import io.quarkus.devtools.codestarts.Codestart;
 import io.quarkus.devtools.codestarts.CodestartProjectDefinition;
 import io.quarkus.devtools.codestarts.quarkus.QuarkusCodestartCatalog.Tag;
-import io.quarkus.devtools.codestarts.quarkus.QuarkusCodestartData.DataKey;
+import io.quarkus.devtools.codestarts.quarkus.QuarkusCodestartData.QuarkusDataKey;
 import io.quarkus.devtools.project.BuildTool;
+import io.quarkus.devtools.testing.SnapshotTesting;
+import io.quarkus.devtools.testing.WrapperRunner;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class QuarkusCodestartRunIT extends PlatformAwareTestBase {
@@ -40,19 +41,15 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
     private static final Set<String> EXCLUDED = Sets.newHashSet(
             "azure-functions-http-example", "commandmode-example");
 
-    private static final Set<String> RUN_ALONE = Sets.newHashSet("resteasy-reactive-example");
+    private static final Set<String> RUN_ALONE = Sets.newHashSet("resteasy-reactive-example", "picocli-example");
 
     @BeforeAll
     static void setUp() throws IOException {
-        ProjectTestUtil.delete(testDirPath.toFile());
-    }
-
-    private Map<String, Object> getTestInputData() {
-        return getTestInputData(null);
+        SnapshotTesting.deleteTestDirectory(testDirPath.toFile());
     }
 
     private Map<String, Object> getTestInputData(final Map<String, Object> override) {
-        return QuarkusCodestartGenerationTest.getTestInputData(getPlatformDescriptor(), override);
+        return getTestInputData(getExtensionsCatalog(), override);
     }
 
     @Test
@@ -111,9 +108,9 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
     @Test
     public void generateCustomizedRESTEasyProjectRun() throws Exception {
         final HashMap<String, Object> data = new HashMap<>();
-        data.put(DataKey.PROJECT_PACKAGE_NAME.getKey(), "com.test.andy");
-        data.put(DataKey.RESTEASY_EXAMPLE_RESOURCE_CLASS_NAME.getKey(), "AndyEndpoint");
-        data.put(DataKey.RESTEASY_EXAMPLE_RESOURCE_PATH.getKey(), "/andy");
+        data.put(QuarkusDataKey.PROJECT_PACKAGE_NAME.key(), "com.test.andy");
+        data.put(QuarkusDataKey.RESTEASY_EXAMPLE_RESOURCE_CLASS_NAME.key(), "AndyEndpoint");
+        data.put(QuarkusDataKey.RESTEASY_EXAMPLE_RESOURCE_PATH.key(), "/andy");
         final String buildTool = "maven";
         final String language = "java";
         final List<String> codestarts = singletonList("resteasy-example");
@@ -124,9 +121,9 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
     @Test
     public void generateCustomizedSpringWebProjectRun() throws Exception {
         final HashMap<String, Object> data = new HashMap<>();
-        data.put(DataKey.PROJECT_PACKAGE_NAME.getKey(), "com.test.spring.web");
-        data.put(DataKey.SPRING_WEB_EXAMPLE_RESOURCE_CLASS_NAME.getKey(), "SpringWebEndpoint");
-        data.put(DataKey.SPRING_WEB_EXAMPLE_RESOURCE_PATH.getKey(), "/springweb");
+        data.put(QuarkusDataKey.PROJECT_PACKAGE_NAME.key(), "com.test.spring.web");
+        data.put(QuarkusDataKey.SPRING_WEB_EXAMPLE_RESOURCE_CLASS_NAME.key(), "SpringWebEndpoint");
+        data.put(QuarkusDataKey.SPRING_WEB_EXAMPLE_RESOURCE_PATH.key(), "/springweb");
         final String buildTool = "maven";
         final String language = "java";
         final List<String> codestarts = singletonList("spring-web-example");
@@ -137,8 +134,8 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
     @Test
     public void generateCustomizedCommandModeProjectRun() throws Exception {
         final HashMap<String, Object> data = new HashMap<>();
-        data.put(DataKey.PROJECT_PACKAGE_NAME.getKey(), "com.test.andy");
-        data.put(DataKey.COMMANDMODE_EXAMPLE_RESOURCE_CLASS_NAME.getKey(), "AndyCommando");
+        data.put(QuarkusDataKey.PROJECT_PACKAGE_NAME.key(), "com.test.andy");
+        data.put(QuarkusDataKey.COMMANDMODE_EXAMPLE_RESOURCE_CLASS_NAME.key(), "AndyCommando");
         final String buildTool = "maven";
         final String language = "java";
         final List<String> codestarts = Collections.emptyList();
@@ -163,7 +160,6 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
                 .addCodestarts(codestarts)
                 .addCodestart(language)
                 .addData(data)
-                .putData(DataKey.JAVA_VERSION.getKey(), System.getProperty("java.specification.version"))
                 .build();
         final CodestartProjectDefinition projectDefinition = getCatalog().createProject(input);
         Path projectDir = testDirPath.resolve(name);
@@ -187,7 +183,7 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
     }
 
     private QuarkusCodestartCatalog getCatalog() throws IOException {
-        return QuarkusCodestartCatalog.fromQuarkusPlatformDescriptor(getPlatformDescriptor());
+        return QuarkusCodestartCatalog.fromExtensionsCatalog(getExtensionsCatalog(), getCodestartsResourceLoader());
     }
 
     private List<String> getRunTogetherExamples() throws IOException {
@@ -216,6 +212,6 @@ class QuarkusCodestartRunIT extends PlatformAwareTestBase {
     }
 
     private boolean isRunAloneExample(Codestart c) {
-        return c.containsTag(Tag.SINGLETON_EXAMPLE.getKey()) || RUN_ALONE.contains(c.getName());
+        return c.containsTag(Tag.SINGLETON_EXAMPLE.key()) || RUN_ALONE.contains(c.getName());
     }
 }
